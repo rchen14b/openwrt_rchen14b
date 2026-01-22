@@ -17,10 +17,10 @@
 
 	aliases {
 		serial0 = &uart1;
-		led-boot = &led_status_red;
-		led-failsafe = &led_status_blue;
+		led-boot = &led_status_green;
+		led-failsafe = &led_status_red;
 		led-upgrade = &led_status_blue;
-		led-running = &led_status_green;
+		led-running = &led_status_white;
 	};
 
 	chosen {
@@ -127,6 +127,20 @@
 		conf {
 			pins = "pcie_reset2";
 			drive-open-drain = <1>;
+		};
+	};
+
+	gswp1_led0_pins: gswp1-led0-pins {
+		mux {
+			function = "phy1_led0";
+			pins = "gpio33";
+		};
+	};
+
+	gswp2_led0_pins: gswp2-led0-pins {
+		mux {
+			function = "phy2_led0";
+			pins = "gpio34";
 		};
 	};
 
