@@ -1,0 +1,44 @@
+From: Ryan Chen <rchen14b@gmail.com>
+Date: Sat, 01 Feb 2026 08:00:00 -0600
+Subject: [PATCH] net: pcs: airoha: fix USXGMII RX path after speed changes
+
+When transitioning between different USXGMII speeds (e.g., from 2.5G to 10G),
+the RX path is not properly reinitialized, causing the link to show as UP
+but no packets are received.
+
+The root cause is that phylink only calls pcs_link_up() when speed changes
+within the same interface mode (USXGMII), but the Airoha PCS requires a full
+reinitialization to properly lock the CDR (Clock Data Recovery) to the new
+line rate.
+
+Fix this by calling data->bringup() instead of data->link_up() for USXGMII
+and 10GBASER interfaces in the pcs_link_up callback. This ensures the full
+PCS initialization sequence is performed, including CDR calibration and
+global reset, similar to MediaTek's USXGMII PCS driver which calls the full
+pcs_config() from pcs_link_up().
+
+Signed-off-by: Ryan Chen <rchen14b@gmail.com>
+---
+ drivers/net/pcs/airoha/pcs-airoha-common.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/pcs/airoha/pcs-airoha-common.c
++++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
+@@ -768,8 +768,16 @@
+ 		}
+ 	}
+
+-	if (data->link_up)
++	/* For USXGMII/10GBASER, reconfigure the PCS to ensure RX signal quality
++	 * after link up, similar to MediaTek's USXGMII PCS driver.
++	 * This is required when speed changes within the same interface mode.
++	 */
++	if ((interface == PHY_INTERFACE_MODE_USXGMII ||
++	     interface == PHY_INTERFACE_MODE_10GBASER) && data->bringup) {
++		data->bringup(priv, interface);
++	} else if (data->link_up) {
+ 		data->link_up(priv);
++	}
+
+ 	/* BPI BMI enable */
+ 	regmap_clear_bits(priv->xfi_mac, AIROHA_PCS_XFI_MAC_XFI_GIB_CFG,
