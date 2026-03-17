@@ -1,0 +1,35 @@
+From: Ryan Chen <rchen14b@gmail.com>
+Date: Thu, 06 Mar 2026 19:00:00 -0600
+Subject: [PATCH] wifi: mt76: mt7996: fix tx_retries underflow with NPU offload
+
+In mt7996_mac_tx_free(), the tx_retries calculation unconditionally
+subtracts 1 from the TXFREE_INFO_COUNT field. When the count is 0
+(which occurs with NPU WiFi offload), this causes an unsigned integer
+underflow, producing bogus tx_retries values (~4 billion).
+
+Fix by checking that count is non-zero before the subtraction.
+
+Signed-off-by: Ryan Chen <rchen14b@gmail.com>
+---
+ mt7996/mac.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+--- a/mt7996/mac.c
++++ b/mt7996/mac.c
+@@ -1361,12 +1361,14 @@
+ 			continue;
+ 		} else if (info & MT_TXFREE_INFO_HEADER) {
+ 			u32 tx_retries = 0, tx_failed = 0;
++			u32 tx_count;
+
+ 			if (!wcid)
+ 				continue;
+
+-			tx_retries =
+-				FIELD_GET(MT_TXFREE_INFO_COUNT, info) - 1;
++			tx_count = FIELD_GET(MT_TXFREE_INFO_COUNT, info);
++			if (tx_count)
++				tx_retries = tx_count - 1;
+ 			tx_failed = tx_retries +
+ 				!!FIELD_GET(MT_TXFREE_INFO_STAT, info);
+
