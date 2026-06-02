@@ -1,0 +1,71 @@
+From: Gilly <gilroyscott1970@gmail.com>
+Date: Sat, 25 Apr 2026 00:00:00 +1000
+Subject: net: phy: rtl8261n: fix IRQ race on Airoha AN7581
+
+Two timing problems cause IRQ lines for the RTL8261N/RTL8264B to be
+permanently disabled ("nobody cared") on the Airoha AN7581 platform,
+leaving phylib to fall back to polling (irq=POLL) on ~40-60% of boots:
+
+1. probe() to phy_attach_direct() window: VEND2:INER is at its hardware
+   default of 0xf3f0 at probe time. Any autoneg or link event between
+   probe() and phy_request_interrupt() fires with no handler registered
+   and the kernel disables the IRQ permanently.
+
+2. Soft reset in config_init() restores VEND2:INER to 0xf3f0. A link-down
+   event fires within milliseconds of reset deassert -- well within the
+   mandatory 30 ms settle period -- before any INER mask write can occur.
+
+Fix both windows:
+- Mask VEND2:INER to 0 at end of rtl826xb_probe() (closes window 1).
+- Mask VEND2:INER to 0 immediately after reset deassert in
+  rtkphy_config_init(), before the 30 ms settle (closes window 2).
+- phylib re-enables INER bits once phy_request_interrupt() has registered
+  the handler.
+
+Note: this is the AN7581 + in-tree rtl8261n driver (Linux 6.12) backport
+of the original IRQ-race fix posted against the new upstream-friendly
+realtek_main.c driver in openwrt PR #22563:
+https://github.com/openwrt/openwrt/pull/22563
+
+Original-author: Gilly1970 <gilroyscott1970@gmail.com>
+Backport-from: Gilly1970/Gemtek-W1700K@f992bfd70c
+[ rchen14b: adapt to the in-tree rtl8261n driver paths
+  (drivers/net/phy/rtl8261n/rtk_phy.c) and the 6.12 kernel; the firmware
+  load / EPROBE_DEFER half of the original patch is omitted because our
+  driver loads its patch DB synchronously from a built-in table, not
+  from request_firmware_direct(), so window 1 from the upstream patch
+  does not apply here. ]
+Signed-off-by: Ryan Chen <rchen14b@gmail.com>
+---
+--- a/drivers/net/phy/rtl8261n/rtk_phy.c
++++ b/drivers/net/phy/rtl8261n/rtk_phy.c
+@@ -65,6 +65,16 @@ static int rtl826xb_probe(struct phy_dev
+     priv->pnswap_tx = device_property_read_bool(dev, "realtek,pnswap-tx");
+     phydev->priv = priv;
+ 
++    /* Mask VEND2:INER at probe: on Airoha AN7581 the IRQ mux assigns a
++     * live IRQ line to this PHY before phy_request_interrupt() registers
++     * a handler. If INER is left at its hardware default (0xf3f0), the
++     * first link change fires an interrupt with no handler, the kernel
++     * marks the line "nobody cared" and disables it permanently for the
++     * session. rtkphy_config_init() re-masks after soft reset; phylib
++     * re-enables INER bits once the handler is registered.
++     */
++    phy_write_mmd(phydev, MDIO_MMD_VEND2, 0xA424, 0);
++
+     return 0;
+ }
+ 
+@@ -83,6 +93,12 @@ static int rtkphy_config_init(struct phy
+             phy_modify_mmd_changed(phydev, 30, 0x145, BIT(0)  , 1);
+             mdelay(30);
+             phy_modify_mmd_changed(phydev, 30, 0x145, BIT(0)  , 0);
++            /* Soft reset restores VEND2:INER to its hardware default;
++             * mask immediately after deassert. The link-down event fires
++             * within milliseconds of reset deassert, well within the
++             * mandatory 30 ms settle period, so the mask must precede
++             * the settle delay. */
++            phy_write_mmd(phydev, MDIO_MMD_VEND2, 0xA424, 0);
+             mdelay(30);
+           #endif
+ 
